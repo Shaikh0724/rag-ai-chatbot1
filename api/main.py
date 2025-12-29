@@ -23,7 +23,7 @@ from qdrant_client import QdrantClient
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 from langchain_core.documents import Document
 from openai import OpenAI
-from google import genai
+import google.generativeai as genai
 
 # Database & Auth Imports
 from api.database import db, hash_pass, verify_pass, create_token as create_access_token 
@@ -47,7 +47,8 @@ QDRANT_API_KEY = os.getenv("QDRANT_API_KEY")
 COLLECTION = os.getenv("QDRANT_COLLECTION_NAME", "AbdulWahab")
 
 openai_client = OpenAI(api_key=OPENAI_API_KEY)
-gemini_client = genai.Client(api_key=os.getenv("GEMINI_API_KEY"))
+genai.configure(api_key=os.getenv("GEMINI_API_KEY"))
+gemini_model = genai.GenerativeModel("gemini-1.5-flash")
 embeddings = OpenAIEmbeddings(model="text-embedding-3-small", openai_api_key=OPENAI_API_KEY)
 
 # --- Pydantic Models ---
@@ -132,9 +133,8 @@ async def chat(req: ChatReq):
         # Generation
         prompt = f"Context: {context}\n\nQuestion: {req.query}"
         if req.model_name == "gemini":
-            res = gemini_client.models.generate_content(model="gemini-2.0-flash", contents=prompt)
+            res = gemini_model.generate_content(prompt)
             answer = res.text
-
         elif req.model_name == "exai":
             from openai import OpenAI as XAIClient
             x_client = XAIClient(
