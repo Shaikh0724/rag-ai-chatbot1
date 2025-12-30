@@ -1,32 +1,39 @@
 import os
+import sys
 from io import BytesIO
 from typing import List, Optional
-from docx import Document
-from pypdf import PdfReader
 import io
-from docx import Document as DocxDocument  # Word ke liye alag naam
-from langchain_core.documents import Document as LangchainDocument  # Langchain ke liye alag
+from datetime import datetime
+
+# FastAPI Imports
 from fastapi import FastAPI, UploadFile, File, HTTPException, Depends
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.staticfiles import StaticFiles
-from fastapi.responses import FileResponse
 from pydantic import BaseModel
+
+# Path fix taaki Render ko files mil jayein
+sys.path.append(os.path.dirname(os.path.abspath(__file__)))
+
+try:
+    from models import UserSignup, UserLogin, ChatReq
+    from auth import verify_access_token
+    from database import db, hash_pass, verify_pass, create_token as create_access_token 
+except ImportError:
+    from api.models import UserSignup, UserLogin, ChatReq
+    from api.auth import verify_access_token
+    from api.database import db, hash_pass, verify_pass, create_token as create_access_token 
+
+# AI & RAG Imports
+from docx import Document as DocxDocument
 from pypdf import PdfReader
-from bson import ObjectId
-from datetime import datetime
-from api.models import UserSignup, UserLogin, ChatReq
-from api.auth import verify_access_token
-# RAG & AI Imports
+from langchain_core.documents import Document as LangchainDocument
 from langchain_openai import OpenAIEmbeddings
 from langchain_qdrant import QdrantVectorStore
 from qdrant_client import QdrantClient
 from langchain_text_splitters import RecursiveCharacterTextSplitter
-from langchain_core.documents import Document
 from openai import OpenAI
 import google.generativeai as genai
+from bson import ObjectId
 
-# Database & Auth Imports
-from api.database import db, hash_pass, verify_pass, create_token as create_access_token 
 app = FastAPI()
 
 # Frontend Connect: static folder ko serve karne ke liye
@@ -44,6 +51,12 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+# Health Routes
+@app.get("/")
+async def root(): return {"message": "AI Chatbot API is Live!"}
+
+@app.get("/health")
+async def health(): return {"status": "ok"}
 
 # --- Clients Setup ---
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
