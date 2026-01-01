@@ -6,7 +6,7 @@ import io
 from datetime import datetime
 
 # FastAPI Imports
-# UPDATE: 'Form' add kiya hai taaki upload ke waqt email le sakein
+# 👇 SIRF 'Form' ADD KIA HAI, BAQI SAME HAI
 from fastapi import FastAPI, UploadFile, File, HTTPException, Depends, Form
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
@@ -30,7 +30,7 @@ from langchain_core.documents import Document as LangchainDocument
 from langchain_openai import OpenAIEmbeddings
 from langchain_qdrant import QdrantVectorStore
 from qdrant_client import QdrantClient
-# UPDATE: Filter lagane ke liye ye import zaroori hai
+# 👇 YE IMPORT ZAROORI HAI FILTER KE LIYE
 from qdrant_client.http import models 
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 from openai import OpenAI
@@ -39,8 +39,8 @@ from bson import ObjectId
 
 app = FastAPI()
 
-# Frontend Connect
-origins = ["*"] # Production mein specific domain rakhna behtar hai
+# CORS Setup
+origins = ["*"] 
 
 app.add_middleware(
     CORSMiddleware,
@@ -79,7 +79,7 @@ class ChatReq(BaseModel):
     session_id: Optional[str] = None
     user_email: str
 
-# --- 1. Auth Endpoints ---
+# --- 1. Auth Endpoints (NO CHANGE) ---
 @app.post("/signup")
 async def signup(user: UserAuth):
     if await db.users.find_one({"email": user.email}):
@@ -94,10 +94,10 @@ async def login(user: UserAuth):
         raise HTTPException(400, "Invalid credentials")
     return {"token": create_access_token({"sub": user.email}), "email": user.email}
 
-# --- 2. Indexing Endpoint (SECURE: User ID Added) ---
+# --- 2. Indexing Endpoint (FIX: Added Email & Metadata) ---
 @app.post("/index")
-async def index_doc(file: UploadFile = File(...), email: str = Form(...)):
-    # UPDATE: email: str = Form(...) add kiya taaki frontend se email receive ho
+async def index_doc(file: UploadFile = File(...), email: str = Form(...)): 
+    # 👆 Upar 'email' add kia hai taaki frontend se aye
     try:
         data = await file.read()
         text = ""
@@ -107,15 +107,12 @@ async def index_doc(file: UploadFile = File(...), email: str = Form(...)):
             pdf = PdfReader(BytesIO(data))
             for page in pdf.pages: 
                 text += page.extract_text() or ""
-        
         elif filename.endswith(".docx"):
             doc = DocxDocument(io.BytesIO(data))
             for para in doc.paragraphs:
                 text += para.text + "\n"
-            
         elif filename.endswith(".txt"):
             text = data.decode("utf-8")
-        
         else:
             raise HTTPException(400, "Sirf PDF, DOCX, aur TXT support hain.")
 
@@ -124,13 +121,13 @@ async def index_doc(file: UploadFile = File(...), email: str = Form(...)):
 
         splitter = RecursiveCharacterTextSplitter(chunk_size=1000, chunk_overlap=150)
         
-        # UPDATE: Metadata mein user_email add kiya
+        # 👇 Metadata mein 'user_email' daal diya
         chunks = splitter.split_documents([
             LangchainDocument(
                 page_content=text, 
                 metadata={
                     "source": file.filename,
-                    "user_email": email # <--- Ye raha wo Tag
+                    "user_email": email 
                 }
             )
         ])
@@ -144,15 +141,14 @@ async def index_doc(file: UploadFile = File(...), email: str = Form(...)):
     except Exception as e:
         raise HTTPException(500, str(e))
 
-# --- 3. Chat & History Endpoint (SECURE: User Filter Added) ---
+# --- 3. Chat Endpoint (FIX: Added Filter) ---
 @app.post("/search")
 async def chat(req: ChatReq):
     try:
-        # RAG Retrieval
         client = QdrantClient(url=QDRANT_URL, api_key=QDRANT_API_KEY)
         vectorstore = QdrantVectorStore(client=client, collection_name=COLLECTION, embedding=embeddings)
         
-        # UPDATE: Filter banaya taaki sirf isi user ka data search ho
+        # 👇 Ye Filter lagaya taaki sirf isi user ka data dhoonde
         filter_condition = models.Filter(
             must=[
                 models.FieldCondition(
@@ -162,22 +158,22 @@ async def chat(req: ChatReq):
             ]
         )
 
-        # UPDATE: Search mein filter pass kiya
+        # 👇 Filter pass kia search mein
         docs = vectorstore.similarity_search(req.query, k=3, filter=filter_condition)
         
         if not docs:
-            # Agar koi doc na mile (ya user naya ho)
             context = "User has not uploaded any relevant documents yet."
         else:
             context = "\n".join([d.page_content for d in docs])
         
-        # Generation
+        # Generation Logic (Original xAI logic preserved)
         prompt = f"Context: {context}\n\nQuestion: {req.query}"
         
         if req.model_name == "gemini":
             res = gemini_model.generate_content(prompt)
             answer = res.text
         elif req.model_name == "exai":
+            # 👇 Aapka xAI wala logic bilkul waisa hi hai
             from openai import OpenAI as XAIClient
             x_client = XAIClient(
                 api_key=os.getenv("XAI_API_KEY"),
@@ -192,7 +188,7 @@ async def chat(req: ChatReq):
             res = openai_client.chat.completions.create(model="gpt-3.5-turbo", messages=[{"role": "user", "content": prompt}])
             answer = res.choices[0].message.content
 
-        # Save to MongoDB History
+        # Save History (Same as before)
         chat_msg = {"user": req.query, "bot": answer, "time": datetime.utcnow()}
         if req.session_id:
             await db.sessions.update_one({"_id": ObjectId(req.session_id)}, {"$push": {"messages": chat_msg}})
@@ -215,8 +211,8 @@ async def get_history(email: str):
     for s in sessions: s["_id"] = str(s["_id"])
     return sessions
 
-# --- 4. RESET ENDPOINT (New Feature: Clear DB) ---
-@app.delete("/reset_qdrant")
+# --- 4. RESET ENDPOINT (UPDATED to GET) ---
+@app.get("/reset_qdrant") 
 async def reset_db():
     try:
         client = QdrantClient(url=QDRANT_URL, api_key=QDRANT_API_KEY)
@@ -225,10 +221,9 @@ async def reset_db():
             collection_name=COLLECTION,
             vectors_config=models.VectorParams(size=1536, distance=models.Distance.COSINE),
         )
-        return {"message": "All data deleted. Start fresh!"}
+        return {"message": "Success! Purana data delete ho gaya. Ab naya upload karein."}
     except Exception as e:
         return {"error": str(e)}
-
 
 
 
