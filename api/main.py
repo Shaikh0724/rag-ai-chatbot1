@@ -1,19 +1,19 @@
-# api/main.py - COMPLETE FIXED CODE
+# api/main.py - COMPLETE FIXED CODE WITH QDRANT FIX
 import os
 import uuid
 from datetime import datetime
+from typing import Optional
 from fastapi import FastAPI, File, UploadFile, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from qdrant_client import QdrantClient
-from qdrant_client.http import models
+from qdrant_client.models import Distance, VectorParams, PointStruct, Filter, FieldCondition, MatchValue
 from openai import OpenAI
 import google.generativeai as genai
 from motor.motor_asyncio import AsyncIOMotorClient
 from bson import ObjectId
 import pypdf
 import io
-# 👇 WORD FILE SUPPORT K LIYE
 import docx 
 from dotenv import load_dotenv
 
@@ -41,7 +41,10 @@ GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 
 # --- CLIENTS INIT ---
 client_openai = OpenAI(api_key=OPENAI_API_KEY)
-client = QdrantClient(url=QDRANT_URL, api_key=QDRANT_API_KEY)
+
+# ✅ FIX: Properly initialize Qdrant client
+qdrant_client = QdrantClient(url=QDRANT_URL, api_key=QDRANT_API_KEY)
+
 mongo_client = AsyncIOMotorClient(MONGODB_URL)
 db = mongo_client.rag_db
 
@@ -58,12 +61,11 @@ class LoginRequest(BaseModel):
     email: str
     password: str
 
-# 👇 YEH MODEL FRONTEND SE MATCH HONA CHAHIYE (422 ERROR FIX)
 class QueryRequest(BaseModel):
-    query: str              # Frontend must send 'query'
+    query: str
     model_name: str = "gpt"
-    user_email: str = None  # Frontend must send 'user_email'
-    session_id: str = None
+    user_email: Optional[str] = None
+    session_id: Optional[str] = None
 
 # --- ROUTES ---
 
@@ -89,21 +91,18 @@ async def login(user: LoginRequest):
     return {"message": "Login successful", "email": user.email, "token": "dummy-token"}
 
 @app.post("/index")
-async def index_document(file: UploadFile = File(...), email: str = None):
+async def index_document(file: UploadFile = File(...), email: Optional[str] = None):
     content = await file.read()
     filename = file.filename.lower()
     text = ""
 
-    # --- 👇 FIXED: FILE TYPE CHECKING (500 ERROR FIX) ---
     try:
         if filename.endswith(".pdf"):
-            # Handle PDF
             pdf_reader = pypdf.PdfReader(io.BytesIO(content))
             for page in pdf_reader.pages:
                 text += page.extract_text() + "\n"
         
         elif filename.endswith(".docx"):
-            # Handle Word Document
             try:
                 doc = docx.Document(io.BytesIO(content))
                 for para in doc.paragraphs:
@@ -112,7 +111,6 @@ async def index_document(file: UploadFile = File(...), email: str = None):
                 return {"message": "Error reading Word file. Make sure it is not password protected."}
         
         elif filename.endswith(".txt"):
-            # Handle Text File
             text = content.decode("utf-8")
             
         else:
@@ -131,40 +129,42 @@ async def index_document(file: UploadFile = File(...), email: str = None):
     
     points = []
     for i, chunk in enumerate(chunks):
-        # OpenAI Embedding
         response = client_openai.embeddings.create(
             input=chunk,
             model="text-embedding-3-small"
         )
         vector = response.data[0].embedding
         
-        # Metadata
         payload = {"text": chunk, "filename": file.filename}
         if email:
             payload["user_email"] = email
 
-        points.append(models.PointStruct(
+        points.append(PointStruct(
             id=str(uuid.uuid4()),
             vector=vector,
             payload=payload
         ))
     
-    # Qdrant Upload
+    # ✅ Create collection if doesn't exist
     try:
-        client.get_collection(QDRANT_COLLECTION_NAME)
+        qdrant_client.get_collection(QDRANT_COLLECTION_NAME)
     except:
-        client.create_collection(
+        qdrant_client.create_collection(
             collection_name=QDRANT_COLLECTION_NAME,
-            vectors_config=models.VectorParams(size=1536, distance=models.Distance.COSINE)
+            vectors_config=VectorParams(size=1536, distance=Distance.COSINE)
         )
         
-    client.upsert(collection_name=QDRANT_COLLECTION_NAME, points=points)
+    qdrant_client.upsert(collection_name=QDRANT_COLLECTION_NAME, points=points)
     return {"message": f"Indexed {len(chunks)} chunks for {file.filename}"}
 
 @app.post("/search")
 async def search(request: QueryRequest):
     try:
-        print(f"DEBUG: Received search request: {request}") # Log to see what frontend sends
+        print(f"DEBUG: Received search request: {request}")
+
+        # Handle empty string session_id
+        if request.session_id == "":
+            request.session_id = None
 
         # 1. Embed Query
         query_vector_response = client_openai.embeddings.create(
@@ -173,24 +173,27 @@ async def search(request: QueryRequest):
         )
         query_vector = query_vector_response.data[0].embedding
 
-        # 2. Search in Qdrant
+        # 2. Search in Qdrant - ✅ FIXED METHOD
         search_filter = None
         if request.user_email:
-            search_filter = models.Filter(
+            search_filter = Filter(
                 must=[
-                    models.FieldCondition(
+                    FieldCondition(
                         key="user_email",
-                        match=models.MatchValue(value=request.user_email)
+                        match=MatchValue(value=request.user_email)
                     )
                 ]
             )
 
-        search_result = client.search(
+        # ✅ FIX: Use correct search method
+        search_result = qdrant_client.search(
             collection_name=QDRANT_COLLECTION_NAME,
             query_vector=query_vector,
             query_filter=search_filter,
             limit=3
         )
+
+        print(f"DEBUG: Found {len(search_result)} results")
 
         # 3. Build Context
         context = ""
@@ -198,10 +201,13 @@ async def search(request: QueryRequest):
             context += hit.payload.get("text", "") + "\n\n"
 
         if not context:
-            return {"response": "I couldn't find relevant info in your uploaded documents.", "session_id": request.session_id}
+            return {
+                "response": "I couldn't find relevant information in your uploaded documents. Please make sure you've uploaded documents and try asking a different question.",
+                "session_id": request.session_id
+            }
 
         # 4. Generate Answer
-        system_prompt = f"Answer based on this context:\n\n{context}"
+        system_prompt = f"You are a helpful AI assistant. Answer the user's question based on the following context from their documents. If the context doesn't contain relevant information, say so politely.\n\nContext:\n{context}"
         answer = "Error generating response."
 
         if request.model_name == "exai":
@@ -215,17 +221,19 @@ async def search(request: QueryRequest):
                 )
                 answer = completion.choices[0].message.content
             except Exception as e:
-                answer = f"Grok Error: {str(e)}"
+                print(f"Grok Error: {str(e)}")
+                answer = f"Grok API Error: {str(e)}"
 
         elif request.model_name == "gemini":
             try:
                 model = genai.GenerativeModel('gemini-1.5-flash')
-                response = model.generate_content(f"{system_prompt}\nUser: {request.query}")
+                response = model.generate_content(f"{system_prompt}\n\nUser Question: {request.query}")
                 answer = response.text
             except Exception as e:
-                answer = f"Gemini Error: {str(e)}"
+                print(f"Gemini Error: {str(e)}")
+                answer = f"Gemini API Error: {str(e)}"
 
-        else: # Default GPT
+        else:  # Default GPT
             try:
                 completion = client_openai.chat.completions.create(
                     model="gpt-3.5-turbo",
@@ -236,7 +244,8 @@ async def search(request: QueryRequest):
                 )
                 answer = completion.choices[0].message.content
             except Exception as e:
-                answer = f"OpenAI Error: {str(e)}"
+                print(f"OpenAI Error: {str(e)}")
+                answer = f"OpenAI API Error: {str(e)}"
 
         # 5. Save History
         if request.user_email:
@@ -259,7 +268,12 @@ async def search(request: QueryRequest):
 
     except Exception as e:
         print(f"CRITICAL ERROR: {str(e)}")
-        return {"response": f"Server Error: {str(e)}", "session_id": request.session_id}
+        import traceback
+        traceback.print_exc()
+        return {
+            "response": f"I encountered an error while processing your request. Please try again or contact support. Error: {str(e)}", 
+            "session_id": request.session_id
+        }
 
 @app.get("/history/{email}")
 async def get_history(email: str):
@@ -271,11 +285,22 @@ async def get_history(email: str):
 @app.get("/reset_qdrant")
 def reset_qdrant():
     try:
-        client.delete_collection(QDRANT_COLLECTION_NAME)
+        qdrant_client.delete_collection(QDRANT_COLLECTION_NAME)
         return {"message": "Success! Purana data delete ho gaya. Ab naya upload karein."}
     except Exception as e:
         return {"message": f"Error: {str(e)}"}
 
+# ✅ BONUS: Health check endpoint for debugging
+@app.get("/health")
+async def health_check():
+    return {
+        "status": "ok",
+        "qdrant_connected": bool(QDRANT_URL and QDRANT_API_KEY),
+        "mongodb_connected": bool(MONGODB_URL),
+        "openai_configured": bool(OPENAI_API_KEY),
+        "gemini_configured": bool(GEMINI_API_KEY),
+        "xai_configured": bool(XAI_API_KEY)
+    }
 '''
 import os
 import sys

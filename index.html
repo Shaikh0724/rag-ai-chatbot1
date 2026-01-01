@@ -115,7 +115,6 @@
             100% { background-position: 200% 0; }
         }
 
-        /* Login Page Animations */
         .auth-page {
             animation: fadeIn 0.5s ease-out;
         }
@@ -204,10 +203,33 @@
                 opacity: 0;
             }
         }
+
+        @keyframes slideInRight {
+            from {
+                transform: translateX(400px);
+                opacity: 0;
+            }
+            to {
+                transform: translateX(0);
+                opacity: 1;
+            }
+        }
+
+        @keyframes slideOutRight {
+            from {
+                transform: translateX(0);
+                opacity: 1;
+            }
+            to {
+                transform: translateX(400px);
+                opacity: 0;
+            }
+        }
     </style>
 </head>
 <body class="overflow-hidden">
 
+    <!-- Auth Overlay -->
     <div id="authOverlay" class="fixed inset-0 z-[60] flex items-center justify-center p-4 auth-page">
         <div class="particles">
             <div class="particle" style="left: 10%; animation-delay: 0s;"></div>
@@ -334,10 +356,12 @@
         </div>
     </div>
 
+    <!-- Main App Container -->
     <div class="flex h-screen hidden" id="appContainer">
         
         <div id="mobileOverlay" class="fixed inset-0 bg-black/60 z-40 hidden md:hidden backdrop-blur-sm transition-opacity"></div>
 
+        <!-- Sidebar -->
         <aside id="sidebar" class="fixed inset-y-0 left-0 z-50 w-72 transform -translate-x-full transition-transform duration-300 md:relative md:translate-x-0 md:w-80 glass text-white flex flex-col border-r border-white/10 bg-[#0f0c29]">
             <div class="p-6 border-b border-white/10 flex justify-between items-center">
                 <div class="flex items-center">
@@ -381,6 +405,7 @@
             </div>
         </aside>
 
+        <!-- Main Content -->
         <main class="flex-1 flex flex-col overflow-hidden relative w-full">
             <header class="glass-strong border-b border-gray-200 p-4 shadow-sm">
                 <div class="flex justify-between items-center max-w-7xl mx-auto">
@@ -394,12 +419,13 @@
                             <select id="modelSelect" class="appearance-none bg-gradient-to-r from-purple-50 to-indigo-50 border-2 border-purple-200 rounded-xl px-4 py-2 pr-10 text-sm font-medium text-gray-700 cursor-pointer hover:border-purple-300 transition-all">
                                 <option value="gpt">🤖 GPT-3.5 Turbo</option>
                                 <option value="gemini">✨ Gemini 2.0 Flash</option>
-                                <option value="exai">🚀 Grok (xAI)</option> </select>
+                                <option value="exai">🚀 Grok (xAI)</option>
+                            </select>
                             <i class="fas fa-chevron-down absolute right-3 top-1/2 -translate-y-1/2 text-gray-500 pointer-events-none"></i>
                         </div>
                         <div id="indexedFilesBadge" class="hidden px-3 py-1 bg-green-100 text-green-700 rounded-full text-xs font-medium whitespace-nowrap">
                             <i class="fas fa-check-circle mr-1"></i>
-                            <span id="fileCount">0</span>
+                            <span id="fileCount">0</span> files
                         </div>
                     </div>
                     
@@ -467,19 +493,14 @@
         const chatArea = document.getElementById('chatArea');
         const queryInput = document.getElementById('queryInput');
         const sendBtn = document.getElementById('sendBtn');
-
-        // --- NEW: Mobile Responsiveness Logic ---
         const sidebar = document.getElementById('sidebar');
         const mobileMenuBtn = document.getElementById('mobileMenuBtn');
         const mobileOverlay = document.getElementById('mobileOverlay');
 
+        // Mobile Sidebar Toggle
         function toggleSidebar() {
             sidebar.classList.toggle('-translate-x-full');
-            if (mobileOverlay.classList.contains('hidden')) {
-                mobileOverlay.classList.remove('hidden');
-            } else {
-                mobileOverlay.classList.add('hidden');
-            }
+            mobileOverlay.classList.toggle('hidden');
         }
         mobileMenuBtn.onclick = toggleSidebar;
         mobileOverlay.onclick = toggleSidebar;
@@ -545,18 +566,51 @@
             document.getElementById('userDisplay').innerText = localStorage.getItem('email');
             loadHistory();
             clearChat();
+            testConnection();
         }
 
-        // --- UPDATED: Secure File Upload (Passing Email in Query Param) ---
+        // Connection Test
+        async function testConnection() {
+            try {
+                const res = await fetch(API_URL + "/");
+                if (res.ok) {
+                    console.log("✅ Backend connection successful");
+                    return true;
+                }
+            } catch (e) {
+                console.error("❌ Backend connection failed:", e);
+                showNotification("⚠️ Cannot connect to backend server", "error");
+                return false;
+            }
+        }
+
+        // File Upload
         document.getElementById('fileUpload').onchange = async (e) => {
             const files = Array.from(e.target.files);
             const userEmail = localStorage.getItem('email');
+            
+            if (files.length === 0) return;
 
+            const allowedTypes = ['.pdf', '.docx', '.txt'];
+            const maxSize = 10 * 1024 * 1024; // 10MB
+            
             for (let file of files) {
+                const ext = '.' + file.name.split('.').pop().toLowerCase();
+                if (!allowedTypes.includes(ext)) {
+                    showNotification(`❌ ${file.name}: Only PDF, DOCX, and TXT files are supported`, 'error');
+                    continue;
+                }
+                
+                if (file.size > maxSize) {
+                    showNotification(`❌ ${file.name}: File too large (max 10MB)`, 'error');
+                    continue;
+                }
+                
+                showNotification(`📤 Uploading ${file.name}...`, 'info');
+                
                 const formData = new FormData();
                 formData.append('file', file);
                 
-                // FIX: Email URL parameter mein bhej rahe hain taaki backend sahi se read kare
                 const uploadUrl = `${API_URL}/index?email=${encodeURIComponent(userEmail)}`;
                 
                 try {
@@ -565,18 +619,23 @@
                         body: formData 
                     });
                     
+                    const data = await res.json();
+                    
                     if (res.ok) {
                         indexedFilesCount++;
                         updateFilesBadge();
                         showNotification(`✅ ${file.name} indexed successfully`, 'success');
+                        addChatMessage(`I've successfully indexed "${file.name}". You can now ask me questions about it!`, 'bot');
                     } else {
-                        showNotification(`❌ Failed to index ${file.name}`, 'error');
+                        console.error("Upload error:", data);
+                        showNotification(`❌ ${file.name}: ${data.message || 'Upload failed'}`, 'error');
                     }
                 } catch (e) {
-                    console.error(e);
-                    showNotification(`❌ Error uploading ${file.name}`, 'error');
+                    console.error("Upload exception:", e);
+                    showNotification(`❌ Error uploading ${file.name}: ${e.message}`, 'error');
                 }
             }
+            
             e.target.value = '';
         };
 
@@ -586,14 +645,14 @@
             badge.classList.remove('hidden');
         }
 
-        // Chat Functions
+        // Send Message
         async function sendMessage() {
             const query = queryInput.value.trim();
             if (!query) return;
 
-            // Check for No File
             if (indexedFilesCount === 0) {
                 showNotification("⚠️ Please upload a document first!", "error");
+                addChatMessage("Please upload a PDF, DOCX, or TXT file first using the Upload button in the top right corner.", 'bot');
                 return;
             }
 
@@ -602,17 +661,17 @@
             queryInput.style.height = 'auto';
             sendBtn.disabled = true;
 
-            // Show typing indicator
             const typingId = addTypingIndicator();
 
             try {
-                // FIX: Using correct keys: 'query' and 'user_email'
                 const payload = {
                     query: query,
                     model_name: document.getElementById('modelSelect').value,
-                    user_email: localStorage.getItem('email'), // Correct Key
-                    session_id: currentSessionId || ""  // <--- Bas ye || "" add karein
+                    user_email: localStorage.getItem('email'),
+                    session_id: currentSessionId
                 };
+
+                console.log("📤 Sending request:", payload);
 
                 const res = await fetch(API_URL + "/search", {
                     method: 'POST',
@@ -621,20 +680,56 @@
                 });
 
                 if (!res.ok) {
-                    const errorData = await res.json();
-                    throw new Error(JSON.stringify(errorData));
+                    let errorMessage = `Server returned ${res.status}`;
+                    try {
+                        const errorData = await res.json();
+                        console.error("❌ Backend error:", errorData);
+                        
+                        if (errorData.detail) {
+                            if (Array.isArray(errorData.detail)) {
+                                errorMessage = errorData.detail.map(e => e.msg).join(', ');
+                            } else {
+                                errorMessage = errorData.detail;
+                            }
+                        }
+                    } catch (parseError) {
+                        errorMessage = await res.text();
+                    }
+                    throw new Error(errorMessage);
                 }
 
                 const data = await res.json();
+                console.log("✅ Received response:", data);
                 
                 removeTypingIndicator(typingId);
-                addChatMessage(data.response, 'bot');
+                
+                if (!data.response || data.response.includes("Server Error")) {
+                    addChatMessage("⚠️ I couldn't generate a proper response. Please try rephrasing your question or upload relevant documents.", 'bot');
+                } else {
+                    addChatMessage(data.response, 'bot');
+                }
+                
                 currentSessionId = data.session_id;
-                loadHistory(); // Refresh history list
+                loadHistory();
+                
             } catch (e) {
                 removeTypingIndicator(typingId);
-                console.error("Search Error:", e);
-                addChatMessage("⚠️ Error: " + e.message, 'bot');
+                console.error("💥 Search Error:", e);
+                
+                let userMessage = "Sorry, I encountered an error. ";
+                
+                if (e.message.includes("Failed to fetch") || e.message.includes("NetworkError")) {
+                    userMessage += "Cannot connect to the server. Please check your internet connection.";
+                } else if (e.message.includes("422")) {
+                    userMessage += "There was a data validation error. Please try again.";
+                } else if (e.message.includes("500")) {
+                    userMessage += "The server encountered an error. Please try uploading your document again.";
+                } else {
+                    userMessage += e.message;
+                }
+                
+                addChatMessage(`⚠️ ${userMessage}`, 'bot');
+                showNotification("Error: " + e.message, "error");
             } finally {
                 sendBtn.disabled = false;
             }
@@ -727,9 +822,9 @@
                 console.error("Failed to load history", e);
             }
         }
+
         async function openSession(sessionId) {
             const messagesContainer = chatArea.querySelector('.max-w-4xl');
-            // Loading effect
             messagesContainer.innerHTML = '<div class="flex justify-center p-8"><div class="typing-indicator"><span></span><span></span><span></span></div></div>';
             
             try {
@@ -741,9 +836,8 @@
                 
                 if (session && session.messages) {
                     currentSessionId = sessionId;
-                    messagesContainer.innerHTML = ''; // Clear loading
+                    messagesContainer.innerHTML = '';
                     
-                    // Welcome Message
                     const welcomeDiv = document.createElement('div');
                     welcomeDiv.className = 'chat-message glass-strong rounded-2xl p-8 shadow-lg mb-6';
                     welcomeDiv.innerHTML = `
@@ -753,7 +847,6 @@
                         </div>`;
                     messagesContainer.appendChild(welcomeDiv);
 
-                    // Messages load karein
                     session.messages.forEach(msg => {
                         addChatMessage(msg.user, 'user');
                         addChatMessage(msg.bot, 'bot');
@@ -766,15 +859,11 @@
                 showNotification("Error loading chat history", "error");
             }
             
-            // Mobile par sidebar band karein
             if(window.innerWidth < 768) toggleSidebar();
         }
 
         function clearChat() {
             const messagesContainer = chatArea.querySelector('.max-w-4xl');
-            const welcomeMsg = messagesContainer.querySelector('.chat-message'); // Keep existing welcome if exists
-            
-            // Recreate default welcome message if lost
             messagesContainer.innerHTML = `
                  <div class="chat-message glass-strong rounded-2xl p-6 md:p-8 shadow-lg">
                         <div class="flex items-start space-x-4">
@@ -788,6 +877,9 @@
                                     <button class="sample-question px-4 py-2 bg-purple-50 hover:bg-purple-100 text-purple-700 rounded-lg text-sm transition-all" onclick="setQuery(this.innerText)">
                                         What's in my documents?
                                     </button>
+                                    <button class="sample-question px-4 py-2 bg-purple-50 hover:bg-purple-100 text-purple-700 rounded-lg text-sm transition-all" onclick="setQuery(this.innerText)">
+                                        Summarize the key points
+                                    </button>
                                 </div>
                             </div>
                         </div>
@@ -795,26 +887,46 @@
             `;
             
             currentSessionId = null;
-            // Close mobile menu on new chat
             if(window.innerWidth < 768) toggleSidebar();
         }
 
-        // Helper for Sample Questions button click
         window.setQuery = (text) => {
-             if (indexedFilesCount === 0) {
+            if (indexedFilesCount === 0) {
                 showNotification("⚠️ Please upload a document first!", "error");
+                const uploadLabel = document.querySelector('label[for="fileUpload"]');
+                uploadLabel.classList.add('animate-pulse');
+                setTimeout(() => uploadLabel.classList.remove('animate-pulse'), 2000);
                 return;
             }
             queryInput.value = text;
+            queryInput.focus();
             sendMessage();
         }
 
         function showNotification(message, type) {
             const notification = document.createElement('div');
-            notification.className = `fixed top-4 right-4 px-6 py-3 rounded-xl shadow-lg z-[100] ${type === 'success' ? 'bg-green-500' : 'bg-red-500'} text-white`;
-            notification.innerText = message;
+            const colors = {
+                success: 'bg-green-500',
+                error: 'bg-red-500',
+                info: 'bg-blue-500',
+                warning: 'bg-yellow-500'
+            };
+            
+            notification.className = `fixed top-4 right-4 px-6 py-3 rounded-xl shadow-lg z-[100] ${colors[type] || colors.info} text-white transform transition-all duration-300`;
+            notification.style.animation = 'slideInRight 0.3s ease-out';
+            notification.innerHTML = `
+                <div class="flex items-center space-x-2">
+                    <i class="fas ${type === 'success' ? 'fa-check-circle' : type === 'error' ? 'fa-exclamation-circle' : 'fa-info-circle'}"></i>
+                    <span>${message}</span>
+                </div>
+            `;
+            
             document.body.appendChild(notification);
-            setTimeout(() => notification.remove(), 3000);
+            
+            setTimeout(() => {
+                notification.style.animation = 'slideOutRight 0.3s ease-in';
+                setTimeout(() => notification.remove(), 300);
+            }, 3000);
         }
 
         function escapeHtml(text) {
@@ -832,7 +944,6 @@
             }
         });
 
-        // Auto-resize textarea
         queryInput.addEventListener('input', function() {
             this.style.height = 'auto';
             this.style.height = Math.min(this.scrollHeight, 150) + 'px';
@@ -843,19 +954,6 @@
             localStorage.clear();
             location.reload();
         };
-
-        // Sample questions - Re-attach listeners dynamically handled by window.setQuery now
-        // But keeping loop just in case for static buttons
-        document.querySelectorAll('.sample-question').forEach(btn => {
-            btn.onclick = () => {
-                if (indexedFilesCount === 0) {
-                    showNotification("⚠️ Please upload a document first!", "error");
-                    return;
-                }
-                queryInput.value = btn.innerText;
-                sendMessage();
-            };
-        });
 
         // Auto-start if token exists
         if (localStorage.getItem('token')) {
