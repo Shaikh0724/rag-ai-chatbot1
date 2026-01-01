@@ -441,9 +441,9 @@
                     <div class="relative flex items-center space-x-3">
                         <div class="flex-1 relative">
                             <textarea id="queryInput" placeholder="Ask a question about your documents..." 
-                                    rows="1"
-                                    class="w-full p-4 pr-14 border-2 border-gray-200 rounded-2xl resize-none focus:ring-2 focus:ring-purple-500 focus:border-transparent transition-all"
-                                    style="min-height: 56px; max-height: 150px;"></textarea>
+                                      rows="1"
+                                      class="w-full p-4 pr-14 border-2 border-gray-200 rounded-2xl resize-none focus:ring-2 focus:ring-purple-500 focus:border-transparent transition-all"
+                                      style="min-height: 56px; max-height: 150px;"></textarea>
                             <button id="sendBtn" class="absolute right-3 top-3 w-10 h-10 gradient-bg text-white rounded-xl flex items-center justify-center hover:shadow-lg transform hover:-translate-y-0.5 transition-all disabled:opacity-50 disabled:cursor-not-allowed">
                                 <i class="fas fa-paper-plane"></i>
                             </button>
@@ -547,18 +547,20 @@
             clearChat();
         }
 
-        // --- UPDATED: Secure File Upload (Send Email) ---
+        // --- UPDATED: Secure File Upload (Passing Email in Query Param) ---
         document.getElementById('fileUpload').onchange = async (e) => {
             const files = Array.from(e.target.files);
-            
+            const userEmail = localStorage.getItem('email');
+
             for (let file of files) {
                 const formData = new FormData();
                 formData.append('file', file);
-                // 👇 IMPORTANT: Email bhejna zaroori hai security ke liye
-                formData.append('email', localStorage.getItem('email')); 
+                
+                // FIX: Email URL parameter mein bhej rahe hain taaki backend sahi se read kare
+                const uploadUrl = `${API_URL}/index?email=${encodeURIComponent(userEmail)}`;
                 
                 try {
-                    const res = await fetch(API_URL + "/index", { 
+                    const res = await fetch(uploadUrl, { 
                         method: 'POST', 
                         body: formData 
                     });
@@ -589,7 +591,7 @@
             const query = queryInput.value.trim();
             if (!query) return;
 
-            // 👇 UPDATED: Check for No File
+            // Check for No File
             if (indexedFilesCount === 0) {
                 showNotification("⚠️ Please upload a document first!", "error");
                 return;
@@ -604,25 +606,35 @@
             const typingId = addTypingIndicator();
 
             try {
+                // FIX: Using correct keys: 'query' and 'user_email'
+                const payload = {
+                    query: query,
+                    model_name: document.getElementById('modelSelect').value,
+                    user_email: localStorage.getItem('email'), // Correct Key
+                    session_id: currentSessionId
+                };
+
                 const res = await fetch(API_URL + "/search", {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({
-                        query: query,
-                        model_name: document.getElementById('modelSelect').value,
-                        user_email: localStorage.getItem('email'),
-                        session_id: currentSessionId
-                    })
+                    body: JSON.stringify(payload)
                 });
+
+                if (!res.ok) {
+                    const errorData = await res.json();
+                    throw new Error(JSON.stringify(errorData));
+                }
+
                 const data = await res.json();
                 
                 removeTypingIndicator(typingId);
                 addChatMessage(data.response, 'bot');
                 currentSessionId = data.session_id;
-                loadHistory();
+                loadHistory(); // Refresh history list
             } catch (e) {
                 removeTypingIndicator(typingId);
-                addChatMessage("⚠️ Sorry, I couldn't connect to the server. Please try again.", 'bot');
+                console.error("Search Error:", e);
+                addChatMessage("⚠️ Error: " + e.message, 'bot');
             } finally {
                 sendBtn.disabled = false;
             }
@@ -683,11 +695,12 @@
         }
 
         function removeTypingIndicator(element) {
-            element.remove();
+            if(element) element.remove();
         }
 
         async function loadHistory() {
             const email = localStorage.getItem('email');
+            if(!email) return;
             try {
                 const res = await fetch(`${API_URL}/history/${email}`);
                 const data = await res.json();
@@ -759,12 +772,41 @@
 
         function clearChat() {
             const messagesContainer = chatArea.querySelector('.max-w-4xl');
-            const welcomeMsg = messagesContainer.querySelector('.chat-message');
-            messagesContainer.innerHTML = '';
-            messagesContainer.appendChild(welcomeMsg);
+            const welcomeMsg = messagesContainer.querySelector('.chat-message'); // Keep existing welcome if exists
+            
+            // Recreate default welcome message if lost
+            messagesContainer.innerHTML = `
+                 <div class="chat-message glass-strong rounded-2xl p-6 md:p-8 shadow-lg">
+                        <div class="flex items-start space-x-4">
+                            <div class="w-10 h-10 gradient-bg rounded-full flex items-center justify-center flex-shrink-0">
+                                <i class="fas fa-robot text-white"></i>
+                            </div>
+                            <div>
+                                <h3 class="font-semibold text-gray-800 mb-2">👋 Hello! I'm your RAG AI Assistant</h3>
+                                <p class="text-gray-600 leading-relaxed text-sm md:text-base">Upload your documents and ask me anything about them. I can help you extract insights, summarize content, and answer specific questions.</p>
+                                <div class="mt-4 flex flex-wrap gap-2">
+                                    <button class="sample-question px-4 py-2 bg-purple-50 hover:bg-purple-100 text-purple-700 rounded-lg text-sm transition-all" onclick="setQuery(this.innerText)">
+                                        What's in my documents?
+                                    </button>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+            `;
+            
             currentSessionId = null;
             // Close mobile menu on new chat
             if(window.innerWidth < 768) toggleSidebar();
+        }
+
+        // Helper for Sample Questions button click
+        window.setQuery = (text) => {
+             if (indexedFilesCount === 0) {
+                showNotification("⚠️ Please upload a document first!", "error");
+                return;
+            }
+            queryInput.value = text;
+            sendMessage();
         }
 
         function showNotification(message, type) {
@@ -802,10 +844,10 @@
             location.reload();
         };
 
-        // Sample questions
+        // Sample questions - Re-attach listeners dynamically handled by window.setQuery now
+        // But keeping loop just in case for static buttons
         document.querySelectorAll('.sample-question').forEach(btn => {
             btn.onclick = () => {
-                // 👇 UPDATED: Check for No File
                 if (indexedFilesCount === 0) {
                     showNotification("⚠️ Please upload a document first!", "error");
                     return;
