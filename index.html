@@ -611,7 +611,7 @@
                     query: query,
                     model_name: document.getElementById('modelSelect').value,
                     user_email: localStorage.getItem('email'), // Correct Key
-                    session_id: currentSessionId
+                    session_id: currentSessionId || ""  // <--- Bas ye || "" add karein
                 };
 
                 const res = await fetch(API_URL + "/search", {
