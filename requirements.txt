@@ -20,16 +20,16 @@ pymongo==4.6.1
 openai==1.10.0
 google-generativeai==0.3.2
 
-# Vector Database (Updated for search fix)
+# Vector Database
 qdrant-client==1.10.1
 
-# LangChain (Versions removed to auto-resolve conflicts)
-langchain
-langchain-community
-langchain-openai
-langchain-qdrant
-langchain-text-splitters
-langchain-core
+# LangChain (Strict Versions to stop Render from hanging)
+langchain==0.1.16
+langchain-community==0.0.32
+langchain-openai==0.0.8
+langchain-qdrant==0.1.0
+langchain-text-splitters==0.0.1
+langchain-core==0.1.52
 
 # Authentication
 python-jose[cryptography]==3.3.0
